@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "numpy>=1.22"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vorti2d"
+version = "0.1.0"
+description = "2-D vorticity-streamfunction Navier-Stokes solver (Fortran kernels + PETSc/MUMPS, f2py interface)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Rohit Sunil Kanchi" }]
+license = "LGPL-2.0-only"
+license-files = ["LICENSE"]
+# NOTE: petsc4py and mpi4py are provided by the `adflow` conda environment
+# (built against the local MUMPS-enabled PETSc) and are intentionally NOT listed
+# as pip dependencies.
+dependencies = ["numpy>=1.22", "scipy>=1.7"]
+
+[project.scripts]
+vorti2d-mesh = "vorti2d.cli:mesh_main"
+vorti2d-postprocess = "vorti2d.postprocess:velocity_main"
+
+[tool.setuptools]
+packages = ["vorti2d"]
+
+[tool.setuptools.package-data]
+vorti2d = ["*.so"]

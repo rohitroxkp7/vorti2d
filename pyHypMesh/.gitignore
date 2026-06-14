@@ -1,0 +1,10 @@
+# generated mesh artifacts
+*_surf.xyz
+*.cgns
+*_xg.csv
+*_yg.csv
+*.xyz
+__pycache__/
+
+# ...but ship the bundled sample airfoil O-grid used by examples/airfoil_unsteady.py
+!oat15a_sample_L0.cgns

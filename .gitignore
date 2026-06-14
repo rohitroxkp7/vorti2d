@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.mod
+*.o
+build/
+*.egg-info/
+# compiled f2py extension (build it with `make build`; not tracked)
+src/fortran/_core*.so
+vorti2d/_core*.so
+examples/run_*/
+out/
+*.npz
+docs/_build/
+.DS_Store
+# scratch render outputs (the committed showcase GIFs live in docs/showcase/)
+plots/
+*.avi
