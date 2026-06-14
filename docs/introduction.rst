@@ -46,4 +46,19 @@ A summary of the main features is given below:
 
 * Restart (checkpoint/resume) support, with restart-safe boundary conditions.
 
-* CSV mesh import, plus a built-in cylinder O-grid generator utility.
+* Free-stream **angle of attack** (the free stream is rotated, not the mesh, so
+  one grid serves any incidence) and selectable **far-field boundary
+  conditions** (hard Dirichlet, or a less-reflective outflow treatment).
+
+* **Force and moment coefficients** (``Cl``, ``Cd``, ``Cm``, split into pressure
+  and friction parts) integrated around the body each saved step, for any O-grid
+  body shape -- validated against Ingham (1983).
+
+* **Visualization output** as an XDMF + HDF5 time series for ParaView / Tecplot /
+  VisIt, plus an optional parallel **velocity post-processor** that reconstructs
+  ``u``, ``v`` and ``|V|`` from the streamfunction.  Legacy MATLAB-compatible CSV
+  output is still available.
+
+* Mesh input from CSV or directly from a **pyHyp CGNS O-grid**; a built-in
+  cylinder O-grid generator and a pyHyp-based generator (cylinder, airfoils, any
+  closed curve) are provided -- see :ref:`meshing <vorti2d_meshing>`.

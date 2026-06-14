@@ -15,14 +15,19 @@ vorti2d requires the following:
 - NumPy and SciPy
 - MPI (e.g. OpenMPI) and ``mpi4py``
 - PETSc built with MUMPS, and ``petsc4py``
+- ``h5py`` (for the XDMF/HDF5 visualization output)
+- ``meson`` + ``ninja`` (the f2py backend on NumPy >= 1.26 / Python >= 3.12,
+  which dropped ``numpy.distutils``)
+- *Optional, for mesh generation:* ``pyHyp`` and ``cgnsutilities`` (the O-grid
+  generator and the direct CGNS reader -- see :ref:`meshing <vorti2d_meshing>`)
 
-These are all provided by the ``adflow`` conda environment used during
-development, which is built against a local PETSc (``--download-mumps``).
-Activate it before building or running:
+These are all provided by the Python virtual environment used during
+development (referred to here as ``myenv``), which is built against a local
+PETSc (``--download-mumps``).  Activate it before building or running:
 
 .. prompt:: bash
 
-    conda activate adflow
+    source $HOME/packages/myenv/bin/activate
 
 Building
 --------
@@ -57,9 +62,11 @@ If everything was successful you can import the package from any directory:
 
     ``make`` injects its built-in ``FC`` variable into recipe sub-shells, which
     breaks NumPy's f2py compiler detection.  The provided ``build.sh`` (which the
-    ``Makefile`` calls) works around this by pinning ``--f90exec`` to the
-    resolved ``gfortran``.  If you invoke ``f2py`` by hand, do so from an
-    activated shell where ``FC`` points at the conda ``gfortran``.
+    ``Makefile`` calls) selects the f2py backend automatically -- legacy
+    ``numpy.distutils`` if present, otherwise the ``meson`` backend (NumPy >=
+    1.26 / Python >= 3.12) with ``FC`` pinned to the resolved ``gfortran``.  If
+    you invoke ``f2py`` by hand, do so from an activated shell where ``FC``
+    points at the environment's ``gfortran``.
 
 Verification
 ------------

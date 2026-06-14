@@ -21,6 +21,7 @@ direct solver.
    install
    theory
    tutorial
+   meshing
    api
    architecture
    verification

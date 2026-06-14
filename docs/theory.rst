@@ -115,8 +115,22 @@ The O-grid wake cut is treated with the interior equations and a modified
 pointer system, so no special boundary treatment is needed there.
 
 **Far field.**
-The free-stream gives :math:`u = 1, v = 0`, hence
+The free stream gives :math:`u = 1, v = 0`, hence
 :math:`\psi_k = y_k` and :math:`\omega_k = 0` at the far-field boundary.
+At a non-zero **angle of attack** :math:`\alpha` (``Config.alpha_deg``) the free
+stream is rotated rather than the mesh, so the far-field streamfunction becomes
+:math:`\psi_k = \cos\alpha\, y_k - \sin\alpha\, x_k` (with :math:`\omega_k = 0`);
+:math:`\alpha = 0` recovers :math:`\psi_k = y_k`.
+
+The outer ring can also be made **less reflective** (``Config.farfield_bc``).
+The default ``"dirichlet"`` clamps the whole ring to the free-stream values
+above.  ``"outflow"`` instead relaxes the vorticity to a zero-gradient
+(:math:`\partial\omega/\partial\eta = 0`) on the downstream arc so the wake
+convects out instead of being pinned to zero, while keeping :math:`\psi = y`
+(near-exact in the far field); ``"outflow_psi"`` additionally applies a
+zero-curvature condition on :math:`\psi`.  The Dirichlet ring is the validated
+default; the outflow variants reduce reflection of the shedding signal in
+unsteady runs.
 
 **Wall.**
 The streamfunction is constant on the wall, :math:`\psi = 0`.
@@ -144,3 +158,45 @@ A nonzero :math:`u_\theta` imposes cylinder rotation.
     :math:`\theta` is taken from the physical coordinates
     (:math:`\cos\theta = x/r`, :math:`\sin\theta = y/r`), so the wall condition
     works for any O-grid, not only the bundled clustering.
+
+Force and moment coefficients
+-----------------------------
+The force on the body is obtained by integrating the surface traction around the
+wall (the ``j = 1`` boundary), following Ingham :cite:p:`Ingham1983` (eqns 15-24)
+and Thress et al. (2022).  With outward unit normal :math:`\mathbf{n}` and
+tangent :math:`\mathbf{t}`, the traction at a no-slip wall splits into a friction
+part set by the wall vorticity and a pressure part:
+
+.. math::
+
+    \mathbf{traction} = -P\,\mathbf{n} \;-\; \frac{1}{Re}\,\omega_w\,\mathbf{t},
+
+where :math:`\omega_w` is the wall vorticity (vorti2d's convention,
+:math:`\omega = v_x - u_y`).  The wall-tangential momentum balance gives
+:math:`\mathrm{d}P/\mathrm{d}s = -(1/Re)\,\partial\omega/\partial n`.  Rather
+than reconstruct :math:`P` by a cumulative sum around the loop -- which does not
+close exactly at finite resolution and biases the lift -- the pressure force is
+obtained by **integration by parts** (Ingham eqn 22):
+
+.. math::
+
+    F_x^{p} =  \frac{1}{Re}\oint y\,\frac{\partial\omega}{\partial n}\,\mathrm{d}s,
+    \qquad
+    F_y^{p} = -\frac{1}{Re}\oint x\,\frac{\partial\omega}{\partial n}\,\mathrm{d}s,
+
+and the net force adds the friction line integral
+:math:`\oint -(1/Re)\,\omega_w\,\mathbf{t}\,\mathrm{d}s`.  The coefficients are
+
+.. math::
+
+    C_d = \frac{2 F_x}{d}, \qquad C_l = \frac{2 F_y}{d}, \qquad
+    C_m = \frac{2 M_z}{d^2},
+
+with reference length :math:`d` (the body diameter, taken from the wall geometry,
+or set explicitly with ``Config.ref_length``) and the moment taken about
+``Config.moment_center``.  Each coefficient is reported split into its pressure
+and friction contributions.  The integral uses only the physical node
+coordinates and the exported metrics, so it works for any single closed wall, not
+just the bundled cylinder.  This confirms that ``Re`` is the **diameter-based**
+Reynolds number: with the diameter convention the computed :math:`C_d(Re)`
+matches Ingham's Table 1 to ~2 %.

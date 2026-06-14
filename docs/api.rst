@@ -44,9 +44,23 @@ A run is described by a :class:`vorti2d.Config`.  The fields are:
      - ``0.0``
      - Unsteady only: apply ``rot_speed`` for ``t <= rot_until`` then switch it
        off (the vortex-shedding 'kick').  Held constant when ``steady``.
+   * - ``farfield_bc``
+     - ``"dirichlet"``
+     - Outer-ring BC: ``"dirichlet"`` (validated default), ``"outflow"``
+       (zero-gradient vorticity on the outflow arc), or ``"outflow_psi"`` (also
+       zero-curvature psi).  See :ref:`theory <vorti2d_theory>`.
+   * - ``alpha_deg``
+     - ``0.0``
+     - Free-stream angle of attack in degrees (rotates the free stream, not the
+       mesh).
    * - ``mesh_xg`` / ``mesh_yg``
      - ``xg.csv`` / ``yg.csv``
      - Paths to the mesh CSV files (shape ``imax x jmax``).
+   * - ``mesh_cgns``
+     - ``None``
+     - Path to a pyHyp 3-D CGNS O-grid to read directly; when set, ``mesh_xg`` /
+       ``mesh_yg`` are ignored (requires ``cgnsutilities``).  See
+       :ref:`meshing <vorti2d_meshing>`.
    * - ``inner_rad`` / ``outer_rad``
      - ``0.5`` / ``50.0``
      - Radii used only by the bundled cylinder generator.
@@ -56,6 +70,24 @@ A run is described by a :class:`vorti2d.Config`.  The fields are:
    * - ``save_fields_every``
      - ``1``
      - Write the psi/omega fields every N physical steps.
+   * - ``write_csv``
+     - ``True``
+     - Write the legacy MATLAB-compatible psi/omega CSV fields.
+   * - ``write_xdmf``
+     - ``True``
+     - Write the XDMF + HDF5 time series (``fields.xmf`` / ``fields.h5``) for
+       ParaView / Tecplot / VisIt.
+   * - ``compute_forces``
+     - ``True``
+     - Compute ``Cl`` / ``Cd`` / ``Cm`` each saved step and append to
+       ``forces.csv``.
+   * - ``ref_length``
+     - ``None``
+     - Reference length ``d`` for the coefficients (``Cd = 2 Fx / d``).
+       ``None`` estimates the body diameter from the wall.
+   * - ``moment_center``
+     - ``(0.0, 0.0)``
+     - ``(x0, y0)`` reference point for the moment coefficient.
    * - ``restart_in``
      - ``None``
      - Path to an ``.npz`` restart to resume from.
@@ -85,8 +117,40 @@ Mesh utilities
 
 .. autofunction:: vorti2d.save_mesh
 
+.. autofunction:: vorti2d.load_cgns_ogrid
+
 The ``vorti2d-mesh`` console script wraps :func:`vorti2d.generate_cylinder`; see
-:ref:`the tutorial <vorti2d_tutorial>`.
+the :ref:`tutorial <vorti2d_tutorial>` and the :ref:`meshing <vorti2d_meshing>`
+page (which also covers the pyHyp generator and direct CGNS import).
+
+Force and moment coefficients
+-----------------------------
+When ``Config.compute_forces`` is set the solver writes ``Cl`` / ``Cd`` / ``Cm``
+(each split into pressure and friction parts) to ``out/forces.csv`` every saved
+step.  The same calculation is available directly:
+
+.. autofunction:: vorti2d.compute_force_coeffs
+
+.. autoclass:: vorti2d.ForceCoeffs
+   :members:
+
+The theory and validation are described under
+:ref:`Force and moment coefficients <vorti2d_theory>`.
+
+Post-processing
+---------------
+The parallel velocity post-processor reconstructs the Cartesian velocity
+``(u, v)`` -- and optionally ``|V|`` -- from the saved streamfunction snapshots
+and writes its own XDMF + HDF5 time series.  Run it as a console script or a
+module, in serial or under ``mpirun`` (snapshots are split across ranks):
+
+.. prompt:: bash
+
+    vorti2d-postprocess out --mag
+    mpirun -np 4 python -m vorti2d.postprocess out --mag
+
+The underlying reconstruction (pure NumPy, no MPI) is in
+``vorti2d.velocity`` and can be called on an in-memory solver state.
 
 Fortran kernels
 ---------------

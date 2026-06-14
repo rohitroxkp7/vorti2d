@@ -14,10 +14,10 @@ class Config:
     # ------------------------------------------------------------------ physics
     re: float = 60.0
     """Reynolds number, used exactly as the MATLAB ``Re`` variable (it enters
-    the equations through the same 1/Re factors).  Note the original code's
-    comment that this may be half the diameter-based Reynolds number depending
-    on the non-dimensionalisation; keep the same convention as MATLAB when
-    cross-checking."""
+    the equations through the same 1/Re factors).  This is the **diameter-based**
+    Reynolds number ``Re = U d / nu``: force-coefficient validation against Ingham
+    (1983) reproduces the published ``Cd(Re)`` to ~2% only with the diameter
+    convention (see ``vorti2d.forces``)."""
 
     # ------------------------------------------------------- time integration
     steady: bool = False

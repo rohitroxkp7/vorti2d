@@ -101,20 +101,65 @@ run continues from the saved physical time::
                    restart_in="out/restart.npz")
     v.run(cfg)
 
+Force and moment coefficients
+-----------------------------
+With ``compute_forces=True`` (the default) the solver integrates the lift, drag
+and moment around the body each saved step and appends them to
+``out/forces.csv`` (columns ``t, cd, cl, cm`` plus the pressure/friction split).
+For a non-cylinder body set the reference length explicitly::
+
+    cfg = v.Config(re=200.0, mesh_cgns="oat15a_L0.cgns", alpha_deg=8.0,
+                   ref_length=1.0)        # chord for an airfoil
+
+The reference point for the moment is ``moment_center``.  See
+:ref:`the theory page <vorti2d_theory>` for the formulation and validation.
+
+Angle of attack and far-field BC
+--------------------------------
+``alpha_deg`` sets the free-stream angle of attack (the free stream is rotated,
+not the mesh, so one grid serves any incidence).  ``farfield_bc`` selects the
+outer-ring treatment -- ``"dirichlet"`` (default), or the less-reflective
+``"outflow"`` / ``"outflow_psi"`` for unsteady wakes::
+
+    cfg = v.Config(re=100.0, steady=False, alpha_deg=4.0,
+                   farfield_bc="outflow", mesh_xg="xg.csv", mesh_yg="yg.csv")
+
+Other meshes
+------------
+Besides the CSV grids and the built-in cylinder generator, vorti2d reads a pyHyp
+CGNS O-grid directly with ``mesh_cgns`` (no pre-conversion).  The
+:ref:`meshing page <vorti2d_meshing>` covers generating airfoil / arbitrary-curve
+O-grids with pyHyp and importing them.
+
 Output
 ------
 Output is written under ``out_dir``:
 
-* ``psi_data/psi_t####.csv`` and ``omega_data/omega_t####.csv`` -- the
-  streamfunction and vorticity fields, flattened to one value per line, one file
-  per physical step.  ``####`` is ``round(t / dt)``.
+* ``fields.xmf`` + ``fields.h5`` -- the streamfunction and vorticity as an XDMF
+  temporal collection (open ``fields.xmf`` in ParaView / Tecplot / VisIt; the
+  ``.xmf`` is rewritten every step so it is valid while a run is in progress).
+  Disable with ``write_xdmf=False``.
+* ``forces.csv`` -- the force / moment coefficients per saved step (when
+  ``compute_forces``).
+* ``psi_data/psi_t####.csv`` and ``omega_data/omega_t####.csv`` -- the legacy
+  flattened field CSVs, one file per physical step (``####`` is ``round(t /
+  dt)``); written when ``write_csv`` is set.  The layout matches the reference
+  MATLAB solver, so results can be diffed directly.
 * ``residual_data/residual_history_t####.csv`` -- the inner-iteration residual
   history for each step.
 * ``xg.csv`` and ``yg.csv`` -- the grid.
 * ``restart.npz`` -- the checkpoint.
 
-The field CSV layout matches the reference MATLAB solver, so results can be
-diffed directly.
+Velocity post-processing
+------------------------
+To visualize the velocity instead of the streamfunction / vorticity, run the
+parallel post-processor on a finished run; it reconstructs ``u``, ``v`` (and,
+with ``--mag``, ``|V|``) and writes its own XDMF + HDF5 time series:
+
+.. prompt:: bash
+
+    vorti2d-postprocess out --mag
+    mpirun -np 4 python -m vorti2d.postprocess out --mag
 
 Example scripts
 ---------------
@@ -122,5 +167,6 @@ Ready-to-run scripts are in the ``examples`` directory:
 
 .. prompt:: bash
 
-    python examples/cylinder_steady.py
-    mpirun -np 4 python examples/cylinder_unsteady.py
+    mpirun -np 4 python examples/cylinder_unsteady.py   # Re=100 shedding
+    mpirun -np 4 python examples/airfoil_unsteady.py    # airfoil at incidence
+    python examples/strouhal.py examples/run_cylinder/out --plot

@@ -15,10 +15,13 @@ layer:
   dependencies.  They are the only code that touches the discretization, and the
   only code that a future GPU port has to replace.
 
-* **Python** -- mesh I/O and the cylinder generator (``mesh.py``), the restart
+* **Python** -- the run configuration (``config.py``), mesh I/O, the cylinder
+  generator and the direct CGNS O-grid reader (``mesh.py``), the restart
   reader/writer (``restart.py``), the steady/unsteady driver (``solver.py``),
-  field output (``fields_io.py``), and the PETSc/MUMPS linear solve
-  (``petsc_solver.py``).  All MPI lives here.
+  field output -- legacy CSV (``fields_io.py``) and XDMF/HDF5 (``viz_io.py``) --
+  the force/moment coefficients (``forces.py``), the velocity reconstruction and
+  parallel post-processor (``velocity.py`` / ``postprocess.py``), and the
+  PETSc/MUMPS linear solve (``petsc_solver.py``).  All MPI lives here.
 
 The data flow per inner iteration is: the driver calls ``assemble_coo`` for the
 rows this rank owns, hands the COO triplets and right-hand side to PETSc, and
@@ -73,5 +76,8 @@ The planned next steps, tracked in ``TODO.md``, are:
   both large-scale parallelism and the GPU work.
 * CUDA / OpenACC versions of ``compute_metrics`` and ``assemble_coo``.
 * A GPU-resident linear solve (cuSPARSE / cuDSS, or PETSc on GPU).
-* General mesh import (CGNS / plot3d) as a drop-in for ``mesh.py``.
 * Use of an optimized PETSc build (the development build is ``-O0``).
+
+Direct CGNS O-grid import is already supported (``Config.mesh_cgns`` /
+:func:`vorti2d.load_cgns_ogrid`, via pyHyp); see :ref:`meshing
+<vorti2d_meshing>`.  General multi-block / plot3d import remains future work.
