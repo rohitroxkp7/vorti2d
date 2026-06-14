@@ -2,8 +2,7 @@
 
 2-D incompressible Navier–Stokes in **vorticity–streamfunction** form on a
 curvilinear O-grid (Garmann metrics), solved with a fully-coupled, fully-implicit
-Newton/dual-time scheme. This is a generalized Fortran + Python port of the
-MATLAB course solvers (CFD Project 3 = steady, Project 4 = unsteady).
+Newton/dual-time scheme.
 
 <p align="center">
   <img src="docs/showcase/cylinder_re100.gif" width="49%" alt="Re=100 cylinder vortex shedding"/>
@@ -19,40 +18,12 @@ rendered in ParaView from the solver's XDMF/HDF5 output.</em></p>
 * **Restart** (checkpoint/resume) support.
 * Runs in parallel: `mpirun -np 4 python run.py`.
 
-## Architecture (and why it's factored this way)
-
-```
-            ┌─────────────────────── Python (orchestration) ───────────────────────┐
- mesh CSV ─▶│ mesh.py  →  metrics ─┐                                                │
-            │                      ▼                                                │
-            │  solver.py: outer physical-time loop (BDF2)                           │
-            │             inner pseudo-time Newton loop                             │
-            │                │                                                      │
-            │                ▼  assemble_coo (FORTRAN)   ──▶  petsc_solver.py        │
-            │       COO triplets + RHS for owned rows         (PETSc AIJ + MUMPS LU, │
-            │                                                  MPI, parallel solve)  │
-            └───────────────────────────────────────────────────────────────────────┘
-                              ▲
-            ┌─────────────────┴──────────── Fortran (vorti2d_core) ─────────────────┐
-            │  compute_metrics  : grid (x,y) → Jac, α, β, γ, P, Q, ηx, ηy           │
-            │  assemble_coo     : state (ψ,ω,history) → block COO matrix + RHS      │
-            │  NO PETSc / NO MPI / NO I/O  — pure array→array compute               │
-            └───────────────────────────────────────────────────────────────────────┘
-```
-
-The Fortran kernels are the **only** code that touches the physics, and they
-have zero external dependencies. That is deliberate:
-
-* **GPU path (end goal: DNS).** `compute_metrics` and `assemble_coo` are
-  embarrassingly parallel over grid nodes (each node computes its own stencil
-  entries). They are the single surface to re-implement in CUDA / OpenACC /
-  cuSPARSE later — nothing else changes. Precision is a one-line switch in
-  `src/fortran/vorti2d_prec.f90` (+ the matching `.f2py_f2cmap`).
-* **MPI lives only in Python** (`petsc_solver.py`), so f2py stays trivial and
-  there are no Fortran/PETSc symbol conflicts. `mpirun -np N` gives each rank a
-  contiguous slice of the global rows; MUMPS factorizes in parallel.
-
 ## Install
+Read the docs in "docs" folder. Please use the command:
+```bash
+make html
+```
+to compile the html docs.
 
 Requires a Python environment with gfortran, numpy, scipy, h5py, mpi4py and a
 petsc4py built against a MUMPS-enabled PETSc (plus `meson` + `ninja` for the
