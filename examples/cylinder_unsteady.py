@@ -15,9 +15,9 @@ import vorti2d as v
 from petsc4py import PETSc
 
 RE = 100.0
-IMAX = JMAX = 151
+IMAX = JMAX = 131
 DT = 0.2
-T_END = 80.0
+T_END = 50.0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(HERE, "run_cylinder")

@@ -14,6 +14,9 @@ The formulation, metrics, and validation cases follow the references below.
 * The steady rotating-cylinder validation data are from Ingham
   :cite:p:`Ingham1983`.
 
+* The unsteady shedding Strouhal--Reynolds correlation used for validation is
+  from Williamson :cite:p:`Williamson1989`.
+
 * Additional steady cylinder-wake comparisons follow Xiao et al.
   :cite:p:`Xiao2002`.
 
