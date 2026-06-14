@@ -1,0 +1,8 @@
+# vorti2d distributed-solver scaling -- CPU vs GPU (measured 2026-06-14)
+# CPU: i9-14900K  gmres_asm (ILU).   GPU: RTX 3060  gmres_jacobi (aijcusparse).
+# Steady cylinder  dtau=1.0  10 fixed Newton iterations  single rank.
+# Reproduce with examples/scaling_bench.py; plot with tools/plot_scaling.py.
+mesh,nodes_k,cpu_ilu_s,gpu_jacobi_s
+513,263,6.54,3.17
+1025,1050,25.03,8.83
+2049,4198,222.34,44.26

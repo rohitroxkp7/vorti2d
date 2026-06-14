@@ -21,7 +21,8 @@ module vorti2d_core
    use vorti2d_prec, only: wp
    implicit none
    private
-   public :: compute_metrics, assemble_coo, node_neighbors
+   public :: compute_metrics, assemble_coo, node_neighbors, assemble_coo_local
+   public :: compute_metrics_local
 
 contains
 
@@ -380,6 +381,284 @@ contains
       end do
       nnz = m
    end subroutine assemble_coo
+
+   !> Domain-decomposed metrics: same Garmann metrics as compute_metrics, but on
+   !! a LOCAL ghosted block (gxm x jmax; i ghosted width >=1, j full) of the 1D
+   !! circumferential decomposition.  Metrics are produced for the OWNED columns
+   !! [il0, il1] (the only ones the local assembler reads); the d?/deta first
+   !! derivatives are i-local so they are computed on ALL columns (incl. ghosts)
+   !! because the cross-derivative at an owned column reads d?/deta at i+-1.
+   !! No branch-cut wrap -- the ghost columns already hold the wrapped mesh.
+   subroutine compute_metrics_local(gxm, jmax, il0, il1, dksi, deta, xgl, ygl, &
+                              jac, alfa, beta, gama, pmet, qmet, &
+                              detadx, detady, xphys, yphys)
+      integer,  intent(in)  :: gxm, jmax, il0, il1
+      real(wp), intent(in)  :: dksi, deta
+      real(wp), intent(in)  :: xgl(gxm, jmax), ygl(gxm, jmax)
+      real(wp), intent(out), dimension(gxm*jmax) :: jac, alfa, beta, gama
+      real(wp), intent(out), dimension(gxm*jmax) :: pmet, qmet, detadx, detady
+      real(wp), intent(out), dimension(gxm*jmax) :: xphys, yphys
+
+      integer  :: il, j, k, e, w, n, s, k1, k2, k3, k4
+      real(wp) :: dksidx, dksidy
+      real(wp), allocatable :: x(:), y(:)
+      real(wp), allocatable :: dxdksi(:), dxdeta(:), dydksi(:), dydeta(:)
+      real(wp), allocatable :: ddxdksidksi(:), ddxdetadeta(:), ddxdksideta(:)
+      real(wp), allocatable :: ddydksidksi(:), ddydetadeta(:), ddydksideta(:)
+      integer  :: ndl
+
+      ndl = gxm*jmax
+      allocate(x(ndl), y(ndl))
+      allocate(dxdksi(ndl), dxdeta(ndl), dydksi(ndl), dydeta(ndl))
+      allocate(ddxdksidksi(ndl), ddxdetadeta(ndl), ddxdksideta(ndl))
+      allocate(ddydksidksi(ndl), ddydetadeta(ndl), ddydksideta(ndl))
+      jac = 0.0_wp; alfa = 0.0_wp; beta = 0.0_wp; gama = 0.0_wp
+      pmet = 0.0_wp; qmet = 0.0_wp; detadx = 0.0_wp; detady = 0.0_wp
+      dxdksi = 0.0_wp; dxdeta = 0.0_wp; dydksi = 0.0_wp; dydeta = 0.0_wp
+      ddxdksidksi = 0.0_wp; ddxdetadeta = 0.0_wp; ddxdksideta = 0.0_wp
+      ddydksidksi = 0.0_wp; ddydetadeta = 0.0_wp; ddydksideta = 0.0_wp
+
+      ! flatten local mesh into local pointer order  k = gxm*(j-1) + il
+      do j = 1, jmax
+         do il = 1, gxm
+            k = gxm*(j-1) + il
+            x(k) = xgl(il, j)
+            y(k) = ygl(il, j)
+         end do
+      end do
+
+      ! --- d?/deta on ALL columns (i-local; ghost values feed the cross-deriv) -
+      do il = 1, gxm
+         do j = 2, jmax-1
+            k = gxm*(j-1) + il
+            dxdeta(k) = (x(k+gxm) - x(k-gxm)) / (2.0_wp*deta)
+            dydeta(k) = (y(k+gxm) - y(k-gxm)) / (2.0_wp*deta)
+         end do
+         ! j=1 forward, j=jmax backward (k1..k4 same il)
+         k1 = il;            k2 = gxm + il;        k3 = 2*gxm + il;   k4 = 3*gxm + il
+         dxdeta(k1) = (-3.0_wp*x(k1) + 4.0_wp*x(k2) - x(k3)) / (2.0_wp*deta)
+         dydeta(k1) = (-3.0_wp*y(k1) + 4.0_wp*y(k2) - y(k3)) / (2.0_wp*deta)
+         k1 = gxm*(jmax-1)+il; k2 = gxm*(jmax-2)+il; k3 = gxm*(jmax-3)+il; k4 = gxm*(jmax-4)+il
+         dxdeta(k1) = (3.0_wp*x(k1) - 4.0_wp*x(k2) + x(k3)) / (2.0_wp*deta)
+         dydeta(k1) = (3.0_wp*y(k1) - 4.0_wp*y(k2) + y(k3)) / (2.0_wp*deta)
+      end do
+
+      ! --- everything else on OWNED columns [il0, il1] -----------------------
+      do il = il0, il1
+         do j = 1, jmax
+            k = gxm*(j-1) + il
+            e = k+1; w = k-1                  ! no wrap: ghosts provide i+-1
+            dxdksi(k) = (x(e) - x(w)) / (2.0_wp*dksi)
+            dydksi(k) = (y(e) - y(w)) / (2.0_wp*dksi)
+            ddxdksidksi(k) = (x(e) - 2.0_wp*x(k) + x(w)) / dksi**2
+            ddydksidksi(k) = (y(e) - 2.0_wp*y(k) + y(w)) / dksi**2
+            if (j >= 2 .and. j <= jmax-1) then
+               n = k+gxm; s = k-gxm
+               ddxdetadeta(k) = (x(n) - 2.0_wp*x(k) + x(s)) / deta**2
+               ddydetadeta(k) = (y(n) - 2.0_wp*y(k) + y(s)) / deta**2
+            else if (j == 1) then
+               k1 = il; k2 = gxm+il; k3 = 2*gxm+il; k4 = 3*gxm+il
+               ddxdetadeta(k) = (2.0_wp*x(k1) - 5.0_wp*x(k2) + 4.0_wp*x(k3) - x(k4)) / deta**2
+               ddydetadeta(k) = (2.0_wp*y(k1) - 5.0_wp*y(k2) + 4.0_wp*y(k3) - y(k4)) / deta**2
+            else
+               k1 = gxm*(jmax-1)+il; k2 = gxm*(jmax-2)+il
+               k3 = gxm*(jmax-3)+il; k4 = gxm*(jmax-4)+il
+               ddxdetadeta(k) = (2.0_wp*x(k1) - 5.0_wp*x(k2) + 4.0_wp*x(k3) - x(k4)) / deta**2
+               ddydetadeta(k) = (2.0_wp*y(k1) - 5.0_wp*y(k2) + 4.0_wp*y(k3) - y(k4)) / deta**2
+            end if
+            ! cross derivative: ksi of d?/deta (reads ghost d?/deta at i+-1)
+            ddxdksideta(k) = (dxdeta(e) - dxdeta(w)) / (2.0_wp*dksi)
+            ddydksideta(k) = (dydeta(e) - dydeta(w)) / (2.0_wp*dksi)
+            ! Jacobian + transformation metrics
+            jac(k) = 1.0_wp / (dxdksi(k)*dydeta(k) - dxdeta(k)*dydksi(k))
+            dksidx     =  jac(k)*dydeta(k)
+            dksidy     = -jac(k)*dxdeta(k)
+            detadx(k)  = -jac(k)*dydksi(k)
+            detady(k)  =  jac(k)*dxdksi(k)
+            alfa(k) = dksidx**2 + dksidy**2
+            beta(k) = detadx(k)**2 + detady(k)**2
+            gama(k) = dksidx*detadx(k) + dksidy*detady(k)
+            pmet(k) = -( alfa(k)*(ddxdksidksi(k)*dksidx + ddydksidksi(k)*dksidy)     &
+                       + 2.0_wp*gama(k)*(ddxdksideta(k)*dksidx + ddydksideta(k)*dksidy) &
+                       + beta(k)*(ddxdetadeta(k)*dksidx + ddydetadeta(k)*dksidy) )
+            qmet(k) = -( alfa(k)*(ddxdksidksi(k)*detadx(k) + ddydksidksi(k)*detady(k))     &
+                       + 2.0_wp*gama(k)*(ddxdksideta(k)*detadx(k) + ddydksideta(k)*detady(k)) &
+                       + beta(k)*(ddxdetadeta(k)*detadx(k) + ddydetadeta(k)*detady(k)) )
+         end do
+      end do
+
+      xphys = x
+      yphys = y
+      deallocate(x, y, dxdksi, dxdeta, dydksi, dydeta)
+      deallocate(ddxdksidksi, ddxdetadeta, ddxdksideta)
+      deallocate(ddydksidksi, ddydetadeta, ddydksideta)
+   end subroutine compute_metrics_local
+
+   !> Domain-decomposed assembler: same physics as assemble_coo, but on a LOCAL
+   !! ghosted block of a 1D circumferential decomposition (see vorti2d/domain.py).
+   !!
+   !! The block is gxm x jmax (i ghosted, j full).  Owned i-columns are
+   !! [il0, il1]; the ghost columns (il < il0, il > il1) hold the wrapped /
+   !! neighbour-rank values, so the branch-cut wrap is gone -- neighbours are just
+   !! k+-1 (i) and k+-gxm (j).  Field/metric arrays are length gxm*jmax in local
+   !! pointer order  k = gxm*(jj-1) + ii.
+   !!
+   !! Indices are emitted in the GLOBAL PETSc node-interleaved (dof=2) ordering
+   !! via the local-to-global map ``lg`` (0-based globals; lg(2*(k-1)+c+1) is the
+   !! global dof of local node k, component c = 0 psi / 1 ome).  Owned equation
+   !! rows fall in [r0, r0+nloc); bvec is indexed (global_row - r0).
+   subroutine assemble_coo_local(gxm, jmax, il0, il1, re, invdtau, inv2dt, urot, &
+                           dksi, deta,                                      &
+                           jac, alfa, beta, gama, pmet, qmet, detadx, detady, &
+                           xphys, yphys, psi, ome, omeold, omeoldold,       &
+                           r0, nloc, lg, maxnnz, ff_bc, ca, sa,             &
+                           coo_i, coo_j, coo_v, nnz, bvec)
+      integer,  intent(in) :: gxm, jmax, il0, il1, r0, nloc, maxnnz, ff_bc
+      real(wp), intent(in) :: re, invdtau, inv2dt, urot, dksi, deta, ca, sa
+      real(wp), intent(in), dimension(gxm*jmax) :: jac, alfa, beta, gama, pmet, qmet
+      real(wp), intent(in), dimension(gxm*jmax) :: detadx, detady, xphys, yphys
+      real(wp), intent(in), dimension(gxm*jmax) :: psi, ome, omeold, omeoldold
+      integer,  intent(in) :: lg(gxm*jmax*2)
+      integer,  intent(out) :: coo_i(maxnnz), coo_j(maxnnz)
+      real(wp), intent(out) :: coo_v(maxnnz)
+      integer,  intent(out) :: nnz
+      real(wp), intent(out) :: bvec(nloc)
+
+      integer  :: il, jj, k, e, w, n, s, ne, nw, se, sw, n2, n3, m, gp, go, ks, ks2
+      real(wp) :: cgam, cab, cbt, rad, ct, st, bw
+      real(wp) :: Aa, Bb, Cc, Dd, Ee, Ff, Gg, Hh, Ii
+      real(wp) :: Pp, Qq, Rr, Ss, Tt
+
+      m = 0
+      bvec = 0.0_wp
+
+      do jj = 1, jmax
+      do il = il0, il1
+         k  = gxm*(jj-1) + il
+         gp = gdof(k, 0)          ! global psi-equation row
+         go = gdof(k, 1)          ! global ome-equation row
+
+         ! =========================== PSI equation =====================
+         if (jj == jmax) then
+            if (ff_bc >= 2 .and. (ca*detadx(k) + sa*detady(k)) > 0.0_wp) then
+               ks  = k - gxm
+               ks2 = k - 2*gxm
+               call push(m, coo_i, coo_j, coo_v, gp, gdof(k,0),    1.0_wp)
+               call push(m, coo_i, coo_j, coo_v, gp, gdof(ks,0),  -2.0_wp)
+               call push(m, coo_i, coo_j, coo_v, gp, gdof(ks2,0),  1.0_wp)
+               bvec(gp-r0+1) = -(psi(k) - 2.0_wp*psi(ks) + psi(ks2))
+            else
+               call push(m, coo_i, coo_j, coo_v, gp, gdof(k,0), 1.0_wp)
+               bvec(gp-r0+1) = (ca*yphys(k) - sa*xphys(k)) - psi(k)
+            end if
+         else if (jj == 1) then
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(k,0), 1.0_wp)
+            bvec(gp-r0+1) = 0.0_wp - psi(k)
+         else
+            e = k+1; w = k-1; n = k+gxm; s = k-gxm
+            ne = n+1; nw = n-1; se = s+1; sw = s-1
+            cgam = (2.0_wp*gama(k)) / (4.0_wp*re*dksi*deta)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(k,0),  &
+                 invdtau + ((2.0_wp*alfa(k))/dksi**2 + (2.0_wp*beta(k))/deta**2)/re)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(e,0),  &
+                 -( alfa(k)/(re*dksi**2) + pmet(k)/(2.0_wp*re*dksi) ))
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(w,0),  &
+                 ( -alfa(k)/(re*dksi**2) + pmet(k)/(2.0_wp*re*dksi) ))
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(n,0),  &
+                 -( beta(k)/(re*deta**2) + qmet(k)/(2.0_wp*re*deta) ))
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(s,0),  &
+                 ( -beta(k)/(re*deta**2) + qmet(k)/(2.0_wp*re*deta) ))
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(ne,0), -cgam)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(nw,0),  cgam)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(se,0),  cgam)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(sw,0), -cgam)
+            call push(m, coo_i, coo_j, coo_v, gp, gdof(k,1), -1.0_wp/re)
+            Pp = (alfa(k)/re) * ((psi(e) - 2.0_wp*psi(k) + psi(w)) / dksi**2)
+            Qq = 2.0_wp*(gama(k)/re) * ((psi(ne)-psi(nw)-psi(se)+psi(sw)) / (4.0_wp*deta*dksi))
+            Rr = (beta(k)/re) * ((psi(n) - 2.0_wp*psi(k) + psi(s)) / deta**2)
+            Ss = (pmet(k)/re) * ((psi(e) - psi(w)) / (2.0_wp*dksi))
+            Tt = (qmet(k)/re) * ((psi(n) - psi(s)) / (2.0_wp*deta))
+            bvec(gp-r0+1) = Pp + Qq + Rr + Ss + Tt + ome(k)/re
+         end if
+
+         ! =========================== OME equation =====================
+         if (jj == jmax) then
+            if (ff_bc >= 1 .and. (ca*detadx(k) + sa*detady(k)) > 0.0_wp) then
+               ks  = k - gxm
+               ks2 = k - 2*gxm
+               call push(m, coo_i, coo_j, coo_v, go, gdof(k,1),    1.0_wp)
+               call push(m, coo_i, coo_j, coo_v, go, gdof(ks,1),  -4.0_wp/3.0_wp)
+               call push(m, coo_i, coo_j, coo_v, go, gdof(ks2,1),  1.0_wp/3.0_wp)
+               bvec(go-r0+1) = (4.0_wp*ome(ks) - ome(ks2))/3.0_wp - ome(k)
+            else
+               call push(m, coo_i, coo_j, coo_v, go, gdof(k,1), 1.0_wp)
+               bvec(go-r0+1) = 0.0_wp - ome(k)
+            end if
+         else if (jj == 1) then
+            n2 = k + gxm       ! (i,2)
+            n3 = k + 2*gxm     ! (i,3)
+            bw = beta(k)/deta**2
+            call push(m, coo_i, coo_j, coo_v, go, gdof(k,1),  -1.0_wp)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(k,0),   (7.0_wp/2.0_wp)*bw)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(n2,0), -(8.0_wp/2.0_wp)*bw)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(n3,0),  (1.0_wp/2.0_wp)*bw)
+            rad = sqrt(xphys(k)**2 + yphys(k)**2)
+            ct  = xphys(k)/rad
+            st  = yphys(k)/rad
+            bvec(go-r0+1) = ome(k)                                  &
+                 - (7.0_wp/2.0_wp)*bw*psi(k)                         &
+                 + (8.0_wp/2.0_wp)*bw*psi(n2)                        &
+                 - (1.0_wp/2.0_wp)*bw*psi(n3)                        &
+                 - ( (qmet(k) - 3.0_wp*(beta(k)/deta))              &
+                     * ( urot / (detadx(k)*ct + detady(k)*st) ) )
+         else
+            e = k+1; w = k-1; n = k+gxm; s = k-gxm
+            ne = n+1; nw = n-1; se = s+1; sw = s-1
+            Aa = (psi(n) - psi(s)) / (2.0_wp*deta)
+            Bb = (ome(e) - ome(w)) / (2.0_wp*dksi)
+            Cc = (psi(e) - psi(w)) / (2.0_wp*dksi)
+            Dd = (ome(n) - ome(s)) / (2.0_wp*deta)
+            Ee = (alfa(k)/re) * ((ome(e) - 2.0_wp*ome(k) + ome(w)) / dksi**2)
+            Ff = 2.0_wp*(gama(k)/re) * ((ome(ne)-ome(nw)-ome(se)+ome(sw)) / (4.0_wp*deta*dksi))
+            Gg = (beta(k)/re) * ((ome(n) - 2.0_wp*ome(k) + ome(s)) / deta**2)
+            Hh = (pmet(k)/re) * ((ome(e) - ome(w)) / (2.0_wp*dksi))
+            Ii = (qmet(k)/re) * ((ome(n) - ome(s)) / (2.0_wp*deta))
+            cab = alfa(k)/(re*dksi**2)
+            cbt = beta(k)/(re*deta**2)
+            cgam = (2.0_wp*gama(k)) / (4.0_wp*re*dksi*deta)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(k,1),  &
+                 invdtau + (2.0_wp*alfa(k))/(re*dksi**2) + (2.0_wp*beta(k))/(re*deta**2) &
+                 + 3.0_wp*inv2dt)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(e,1),  &
+                 ( (jac(k)*Aa)/(2.0_wp*dksi) ) - cab - pmet(k)/(2.0_wp*re*dksi))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(w,1),  &
+                 ( -(jac(k)*Aa)/(2.0_wp*dksi) ) - cab + pmet(k)/(2.0_wp*re*dksi))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(n,1),  &
+                 ( -(jac(k)*Cc)/(2.0_wp*deta) ) - cbt - qmet(k)/(2.0_wp*re*deta))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(s,1),  &
+                 ( (jac(k)*Cc)/(2.0_wp*deta) ) - cbt + qmet(k)/(2.0_wp*re*deta))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(ne,1), -cgam)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(nw,1),  cgam)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(se,1),  cgam)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(sw,1), -cgam)
+            call push(m, coo_i, coo_j, coo_v, go, gdof(n,0),  (jac(k)*Bb)/(2.0_wp*deta))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(s,0), -(jac(k)*Bb)/(2.0_wp*deta))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(e,0), -(jac(k)*Dd)/(2.0_wp*dksi))
+            call push(m, coo_i, coo_j, coo_v, go, gdof(w,0),  (jac(k)*Dd)/(2.0_wp*dksi))
+            bvec(go-r0+1) = -(jac(k)*Aa*Bb) + (jac(k)*Cc*Dd) + Ee + Ff + Gg + Hh + Ii &
+                 - ( (3.0_wp*ome(k) - 4.0_wp*omeold(k) + omeoldold(k)) * inv2dt )
+         end if
+      end do
+      end do
+      nnz = m
+
+   contains
+      !> global dof (0-based) of local node kk, component c (0=psi,1=ome)
+      pure integer function gdof(kk, c)
+         integer, intent(in) :: kk, c
+         gdof = lg(2*(kk-1) + c + 1)
+      end function gdof
+   end subroutine assemble_coo_local
 
    !> Append one COO entry (0-based gi, gj).
    pure subroutine push(m, ci, cj, cv, gi, gj, val)

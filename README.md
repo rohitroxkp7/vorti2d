@@ -28,6 +28,25 @@ Right: separated flow past an OAT15A airfoil at high angle of attack.</em></p>
 * Mesh from CSV, the built-in cylinder generator, or a **pyHyp CGNS O-grid** read
   directly (cylinder, airfoils, any closed curve).
 * **Restart** (checkpoint/resume) with restart-safe boundary conditions.
+* **Domain-decomposed distributed solver** (PETSc DMDA + GMRES/ASM–ILU) for
+  DNS-scale meshes, with optional **GPU** acceleration (CUDA).
+
+## Scaling
+
+The distributed solver runs on CPU (GMRES + ASM/ILU) or GPU (GMRES + Jacobi).
+On a **steady, well-conditioned** cylinder benchmark, the **GPU (RTX 3060)
+reaches ~5× the full CPU (i9-14900K) at DNS scale**, and the advantage grows with
+mesh size:
+
+<p align="center">
+  <img src="docs/images/gpu_scaling.png" width="92%" alt="CPU vs GPU scaling"/>
+</p>
+
+Reproduce with [tools/gpu_scaling.sh](tools/gpu_scaling.sh) (data in
+[tools/scaling_data.csv](tools/scaling_data.csv), plot via
+[tools/plot_scaling.py](tools/plot_scaling.py)). The CPU `gmres_asm` solver is the
+production path for real convection-dominated DNS; see the
+[parallel/GPU guide](docs/parallel.rst) for the GPU regime and limits.
 
 ## Documentation
 
@@ -48,11 +67,14 @@ optional, for mesh generation.
 ```bash
 source $HOME/packages/myenv/bin/activate # sample user-created virtual environment
 cd vorti2d                               # repository clone
-make build                               # compile the f2py _core kernels
-pip install -e . --no-build-isolation    # install the package (importable anywhere)
+python tools/check_requirements.py       # 1. verify the environment (PETSc/MUMPS, MPI, gfortran…)
+make build                               # 2. compile the f2py _core kernels
+pip install -e . --no-build-isolation    # 3. install the package (importable anywhere)
+python tests/test_smoke.py               # 4. post-install sanity check
 ```
 
-`make install` does both build steps. (`petsc4py` / `mpi4py` / `h5py` come from
+Run the requirements check **first** — only build once every *required* line
+reports `PASS`. `make install` does the two build steps. (`petsc4py` / `mpi4py` / `h5py` come from
 the env and are intentionally not pip dependencies.) The build auto-selects the
 f2py backend: legacy `numpy.distutils` if present, otherwise the `meson` backend.
 

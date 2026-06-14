@@ -1,25 +1,53 @@
 # vorti2d — TODO
 
-## High priority
+## High priority — DNS parallelization
 
-- [ ] **DNS scaling: remove replicated state.** Right now every MPI rank holds
-      the full `psi`/`ome`/history fields and the Fortran assembler reads the
-      whole field to build its owned rows (see `solver.py` + `petsc_solver.py`,
-      and the "replicate-state" note). This is correct but does not scale to DNS
-      resolutions. Replace with a domain-decomposed / ghosted state:
-        - partition nodes across ranks (consistent with the PETSc row layout),
-        - exchange only ghost (halo) layers each pseudo-iteration,
-        - assemble owned rows from local + ghost data,
-        - keep the COO/CSR + MUMPS path (or move to an iterative/GPU solver).
-      This is the main blocker for large-scale and the prerequisite for the GPU
-      DNS work.
+Profiling (``VORTI2D_TIMING=1``, ``examples/scaling_bench.py``) on 321x321 shows
+the **PETSc/MUMPS direct LU solve is ~96% of wall time and stops strong-scaling
+past np=8 (regresses at np=16)** — this is the observed "mild speedup then
+slowdown". The replicated-state gather is <0.5% (a *memory* limit, not a speed
+one). Plan, in order:
 
-## GPU / DNS
+- [x] **Stage 1 — domain decomposition (halo / ownership).** DONE.
+      `vorti2d/domain.py` (DMDA, 1D-in-`i`, dof=2, periodic seam), local
+      `assemble_coo_local` + `compute_metrics_local` (`src/fortran/vorti2d_core.f90`),
+      `vorti2d/dist_solver.py`.  Validated == replicated/MUMPS to ~1e-13 (serial
+      and parallel, steady + unsteady).  `Scatter.toAll` gone.
+- [x] **Stage 2 — GMRES + ASM/ILU** behind `Config.linsolve`.  DONE.
+      `gmres_asm` is the CPU optimum; ~15-20x faster than MUMPS and no np>8
+      regression.  (FieldSplit `gmres_fs` tried -> the psi/ome coupling is too
+      strong to split; not recommended.)
+- [x] **GPU, well-conditioned regime.** DONE.  `Config.linsolve="gmres_jacobi"` +
+      `-dm_vec_type cuda -dm_mat_type aijcusparse`.  ILU is GPU-hostile (serial
+      triangular solve); **Jacobi** is the GPU preconditioner.  For a STEADY,
+      diffusion-dominated flow (low cell-Peclet) it is ~2-5x over the full CPU
+      and the advantage grows with mesh (513/1025/2049 -> 2.0/2.8/5.0x).
+      Reproduce: `tools/gpu_scaling.sh`.  Data `tools/scaling_data.csv`, plot
+      `tools/plot_scaling.py`.
+- [x] **Distributed restart** (write + resume).  DONE, resume reproduces a
+      continuous run exactly.
 
-- [ ] CUDA (or OpenACC) versions of `compute_metrics` and `assemble_coo` — the
-      only kernels that need porting. Precision switch already centralized in
-      `vorti2d_prec.f90` + `.f2py_f2cmap`.
-- [ ] Evaluate GPU-resident linear solve (cuSPARSE / cuDSS, or PETSc on GPU).
+Remaining DNS / GPU work:
+
+- [ ] **GPU solver for fully-coupled, convection-dominated DNS — OPEN (research).**
+      ILU works on CPU because it factors the WHOLE coupled matrix (captures the
+      psi/ome coupling) but is serial -> GPU-hostile.  Every GPU-PARALLEL
+      preconditioner approximates the coupling away and needs 600-3000+ iters:
+      tested+rejected = Jacobi, FieldSplit+AMG, AMG-on-full, Schur, segregated GS.
+      **AMGx (NVIDIA GPU AMG) is mesh-independent on each isolated elliptic block**
+      (psi-Poisson AND the diffusion-dominated omega) -- the obstacle is purely the
+      coupling.  Lever: a coupling-aware GPU preconditioner, or a different
+      discretization.  Infra is built: PETSc 3.25.2 + CUDA + AMGx at
+      `$HOME/packages/petsc-3.25.2` (arch cuda-opt), petsc4py 3.25 in
+      `$HOME/packages/gpuenv`; CPU stack (myenv / petsc 3.21) untouched.
+- [ ] **GPU-resident assembly**: avoid the per-Newton-iteration host->device
+      matrix transfer (`MatSetValuesCOO`, now available in the 3.25 build).
+- [ ] **Localise the mesh read** (it is still broadcast at setup; only the metric
+      arrays are local) for the very largest meshes.
+- [ ] **(Future) 2D `(i,j)` tiling** for multi-node clusters (1D-in-`i` scales to
+      ~`imax` ranks; the single-desktop CPU saturates memory bandwidth at ~8 ranks).
+- [ ] CUDA/OpenACC ports of `compute_metrics` / `assemble_coo` (currently the
+      solve runs on GPU via PETSc; the assembly is still host-side).
 
 ## Post-processing / output  (done 2026-06-13)
 

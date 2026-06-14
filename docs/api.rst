@@ -97,6 +97,17 @@ A run is described by a :class:`vorti2d.Config`.  The fields are:
    * - ``restart_every``
      - ``0``
      - Write a restart every N steps (``0`` = at the end only).
+   * - ``distributed``
+     - ``False``
+     - Use the domain-decomposed (DMDA) solver instead of the replicated one.
+       See :ref:`the parallel / GPU guide <vorti2d_parallel>`.
+   * - ``linsolve``
+     - ``"mumps"``
+     - Distributed linear solver: ``"mumps"`` (direct ref), ``"gmres_asm"`` (CPU),
+       ``"gmres_jacobi"`` (GPU), ``"gmres_fs"``.
+   * - ``ksp_rtol`` / ``ksp_restart``
+     - ``1e-10`` / ``200``
+     - Iterative-solve tolerance and GMRES restart (use ~60 on big-mesh GPU runs).
 
 .. autoclass:: vorti2d.Config
    :members:

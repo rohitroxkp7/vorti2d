@@ -23,6 +23,7 @@ direct solver.
    tutorial
    meshing
    api
+   parallel
    architecture
    verification
    citation

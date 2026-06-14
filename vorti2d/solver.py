@@ -26,6 +26,8 @@ from .petsc_solver import MumpsSolver
 
 core = _core.vorti2d_core
 
+_PROFILE = bool(os.environ.get("VORTI2D_TIMING"))
+
 
 class Solver:
     def __init__(self, config: Config):
@@ -35,6 +37,7 @@ class Solver:
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
         self.restarted = False
+        self._t_kernel = 0.0
         self._setup()
 
     # ----------------------------------------------------------------- setup
@@ -113,6 +116,8 @@ class Solver:
     # --------------------------------------------------------------- solving
     def _assemble_and_solve_once(self, invdtau, inv2dt, urot):
         cfg = self.cfg
+        if _PROFILE:
+            t0 = time.perf_counter()
         ci, cj, cv, nnz, bvec = core.assemble_coo(
             self.imax, self.jmax, cfg.re, invdtau, inv2dt, urot,
             self.dksi, self.deta,
@@ -120,6 +125,8 @@ class Solver:
             self.detadx, self.detady, self.xphys, self.yphys,
             self.psi, self.ome, self.omeold, self.omeoldold,
             self.r0, self.r1, self.maxnnz, self._ff_bc, self._ca, self._sa)
+        if _PROFILE:
+            self._t_kernel += time.perf_counter() - t0
         self.lin.assemble(ci[:nnz], cj[:nnz], cv[:nnz], bvec)
         sol = self.lin.solve()
         self.psi += sol[:self.ndof]
@@ -210,9 +217,33 @@ class Solver:
         self._write_restart()
         if self._viz is not None:
             self._viz.close()
-        self._log(f"vorti2d: done in {time.time() - t_wall0:.2f}s, "
-                  f"final t={self.t}")
+        total = time.time() - t_wall0
+        self._log(f"vorti2d: done in {total:.2f}s, final t={self.t}")
+        if _PROFILE:
+            self._report_timings(total)
         return self
+
+    def _report_timings(self, total: float):
+        """Per-phase wall-time breakdown of the inner iteration (max over ranks)."""
+        from mpi4py import MPI
+        tk = self.comm.allreduce(self._t_kernel, op=MPI.MAX)
+        lt = self.lin.timings()
+        n = max(lt["n_solves"], 1)
+        if self.rank != 0:
+            return
+        rows = [("fortran assemble_coo", tk, "per-rank compute (should scale ~1/P)"),
+                ("csr build + setValues", lt["csr_assemble"], "per-rank, local"),
+                ("PETSc/MUMPS linsolve", lt["linsolve"], "factor + triangular solve"),
+                ("Scatter.toAll (gather)", lt["gather_toall"], "replicated-state allgather")]
+        acc = sum(r[1] for r in rows)
+        print(f"\n  --- vorti2d phase breakdown ({self.size} ranks, "
+              f"{n} solves, {self.imax}x{self.jmax}) ---", flush=True)
+        print(f"  {'phase':<24}{'total s':>10}{'ms/solve':>11}{'%':>7}   note")
+        for name, t, note in rows:
+            print(f"  {name:<24}{t:>10.2f}{1e3*t/n:>11.2f}"
+                  f"{100*t/max(acc,1e-9):>7.1f}   {note}")
+        print(f"  {'measured inner total':<24}{acc:>10.2f}{1e3*acc/n:>11.2f}"
+              f"{100:>7.1f}   (wall {total:.1f}s)\n")
 
     def _viz_append(self, t: float):
         """Append the current psi/ome state to the XDMF+HDF5 time series."""
@@ -252,6 +283,14 @@ class Solver:
             ref_length=cfg.ref_length, moment_ref=cfg.moment_center)
 
 
-def run(config: Config) -> Solver:
-    """Convenience entry point: build a Solver and run it."""
+def run(config: Config):
+    """Convenience entry point: build a solver and run it.
+
+    ``Config.distributed`` selects the domain-decomposed (DMDA) solver
+    (``vorti2d.dist_solver.DistributedSolver``) for DNS-scale parallel runs;
+    otherwise the replicated :class:`Solver` is used.
+    """
+    if config.distributed:
+        from .dist_solver import DistributedSolver
+        return DistributedSolver(config).run()
     return Solver(config).run()

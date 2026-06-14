@@ -22,12 +22,16 @@ conversion is cheap and done once-per-pattern.)
 """
 from __future__ import annotations
 
+import os
+import time
+
 import numpy as np
 import scipy.sparse as sp
 from petsc4py import PETSc
 
 _IntType = PETSc.IntType
 _ScalarType = PETSc.ScalarType
+_PROFILE = bool(os.environ.get("VORTI2D_TIMING"))
 
 
 class MumpsSolver:
@@ -61,12 +65,18 @@ class MumpsSolver:
         self._indptr = None
         self._indices = None
 
+        # optional phase timers (VORTI2D_TIMING=1); zero cost otherwise
+        self.t_csr = self.t_solve = self.t_gather = 0.0
+        self.n_solves = 0
+
     def row_range(self):
         """Owned global row range [r0, r1) for the Fortran assembler."""
         return self.r0, self.r1
 
     def assemble(self, coo_i, coo_j, coo_v, bvec):
         """Assemble A and b from this rank's COO entries (global indices)."""
+        if _PROFILE:
+            t0 = time.perf_counter()
         local_rows = np.asarray(coo_i, dtype=np.int64) - self.r0
         csr = sp.csr_matrix(
             (np.asarray(coo_v, dtype=np.float64),
@@ -81,16 +91,38 @@ class MumpsSolver:
                             csr.data.astype(_ScalarType))
         self.A.assemble()
         self.b.setArray(np.asarray(bvec, dtype=_ScalarType))
+        if _PROFILE:
+            self.t_csr += time.perf_counter() - t0
 
     def solve(self) -> np.ndarray:
         """Solve A x = b; return the full solution (length n) on every rank."""
+        if _PROFILE:
+            self.comm.tompi4py().Barrier()
+            t0 = time.perf_counter()
         self.ksp.solve(self.b, self.x)
         reason = self.ksp.getConvergedReason()
         if reason < 0:
             raise RuntimeError(f"PETSc/MUMPS solve failed, reason={reason}")
+        if _PROFILE:
+            t1 = time.perf_counter()
         self.scatter.scatter(self.x, self.x_full,
                              mode=PETSc.ScatterMode.FORWARD)
-        return self.x_full.getArray().copy()
+        out = self.x_full.getArray().copy()
+        if _PROFILE:
+            self.t_solve += t1 - t0
+            self.t_gather += time.perf_counter() - t1
+            self.n_solves += 1
+        return out
+
+    def timings(self) -> dict:
+        """Max-over-ranks wall time per phase (seconds), reported on all ranks."""
+        mpicomm = self.comm.tompi4py()
+        from mpi4py import MPI
+        loc = np.array([self.t_csr, self.t_solve, self.t_gather], dtype=np.float64)
+        mx = np.empty_like(loc)
+        mpicomm.Allreduce(loc, mx, op=MPI.MAX)
+        return {"csr_assemble": mx[0], "linsolve": mx[1], "gather_toall": mx[2],
+                "n_solves": self.n_solves}
 
     def destroy(self):
         for obj in (self.ksp, self.A, self.b, self.x, self.x_full, self.scatter):

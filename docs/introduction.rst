@@ -39,7 +39,10 @@ A summary of the main features is given below:
 * Unsteady time integration with a second-order backward difference (BDF2)
   scheme in physical time and pseudo-time sub-iterations to convergence.
 
-* Parallel direct linear solve via PETSc and MUMPS (``mpirun -np N python ...``).
+* Parallel direct linear solve via PETSc and MUMPS (``mpirun -np N python ...``),
+  or a **domain-decomposed distributed solver** (PETSc DMDA + iterative
+  GMRES/ASM-ILU) for DNS-scale meshes, with optional **GPU** acceleration via
+  CUDA -- see :ref:`the parallel / GPU guide <vorti2d_parallel>`.
 
 * Fortran compute kernels (metrics and sparse-matrix assembly) wrapped with
   ``f2py``; all MPI, I/O and the linear solve live in the Python layer.

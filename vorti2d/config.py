@@ -62,6 +62,50 @@ class Config:
     original ``psi = y`` (flow in +x).  Rotates the free stream, not the mesh, so
     the same grid serves any incidence."""
 
+    # ------------------------------------------------------- parallel solver
+    distributed: bool = False
+    """Use the domain-decomposed (DMDA) distributed solver instead of the
+    replicated one.  Keeps only a ghosted local slab of the state per rank (no
+    full-field replication or ``Scatter.toAll``), so a super-fine DNS mesh fits
+    across ranks.  Pair with ``linsolve="gmres_asm"`` for the scalable iterative
+    solve; ``"mumps"`` still works as the validation reference."""
+
+    # ------------------------------------------------------- linear solver
+    linsolve: str = "mumps"
+    """Linear solver for the coupled Newton system (distributed solver only):
+
+    * ``"mumps"`` -- PETSc direct LU via MUMPS.  The validated reference; exact,
+      but the factorization does not strong-scale (the DNS bottleneck).
+    * ``"gmres_asm"`` -- GMRES preconditioned with Additive Schwarz (ASM) and
+      ILU sub-domain solves.  The recommended **CPU** solver and the practical CPU
+      optimum for this strongly-coupled, convection-dominated system.
+    * ``"gmres_jacobi"`` (alias ``"gpu"``) -- GMRES + point-Jacobi.  The
+      recommended **GPU** solver: Jacobi needs more iterations than ILU but is
+      fully parallel (no serial triangular solve), so on a GPU it far outperforms
+      ASM/ILU (which is GPU-hostile).  Run with ``PETSC_OPTIONS="-dm_vec_type cuda
+      -dm_mat_type aijcusparse -use_gpu_aware_mpi 0"``; keep ``ksp_restart`` modest
+      on large meshes (the Krylov basis lives on the GPU).  Measured ~5x over the
+      CPU at 2049^2 (4.2M nodes), advantage growing with mesh size.
+    * ``"gmres_fs"`` -- GMRES + PCFIELDSPLIT (AMG on the psi-Poisson block, ILU on
+      the ome block).  Available and validated, but **not recommended**: the
+      psi/ome coupling is too strong to split, so it converges far slower than the
+      monolithic ``gmres_asm`` here.
+    """
+    ksp_rtol: float = 1.0e-10
+    """Relative tolerance for the iterative (``gmres_asm``) linear solve."""
+    ksp_restart: int = 200
+    """GMRES restart length.  Real (convection-dominated) flows need many Krylov
+    vectors per solve; too small a restart stalls convergence.  Larger costs more
+    memory + orthogonalisation."""
+    ilu_fill: int = 1
+    """ASM sub-domain ILU fill level.  ILU(0) can fail to converge on the hard
+    pure-Newton (``dtau=inf``) system; ILU(1) is a robust default and (in the
+    diagonally-dominant dual-time regime) converges in the same iteration count as
+    higher fill at lower apply cost.  Override per run with ``-v2d_sub_pc_factor_levels``."""
+    asm_overlap: int = 1
+    """Additive-Schwarz subdomain overlap (1 is the usual default; 2 trims the
+    iteration count ~15% at higher communication cost)."""
+
     # ----------------------------------------------------------------- mesh
     mesh_xg: str = "xg.csv"
     mesh_yg: str = "yg.csv"
