@@ -10,7 +10,7 @@ solve, and a single code path for steady and unsteady flow.
   <img src="docs/showcase/airfoil_oat15a.gif" width="49%" alt="OAT15A airfoil at incidence"/>
 </p>
 <p align="center"><em>Left: vortex shedding past a cylinder at Re=100 (St≈0.16, mean Cd≈1.31).
-Right: separated flow past an OAT15A airfoil at angle of attack.</em></p>
+Right: separated flow past an OAT15A airfoil at high angle of attack.</em></p>
 
 ## Features
 
